@@ -12,10 +12,14 @@ from django.db.models import Sum
 
 from rest_framework.permissions import AllowAny
 
+
+
 class VentaViewSet(viewsets.ModelViewSet):
     queryset = Venta.objects.all()
     serializer_class = VentaSerializer
     permission_classes = [IsAuthenticated, IsAdminOrVendedor]
+
+
 
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdmin])
