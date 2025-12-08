@@ -1,35 +1,67 @@
-from rest_framework import viewsets
+from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated
 from usuarios.permisos import IsAdminOrVendedor
-from .models import Venta
-from .serializers import VentaSerializer
+from .models import Venta, SalesState
+from .serializers import VentaSerializer, SalesStateSerializer
+from rest_framework.exceptions import ValidationError
 
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from usuarios.permisos import IsAdmin
 from django.utils import timezone
 from django.db.models import Sum
+from django.db import transaction
 
 from rest_framework.permissions import AllowAny
 
 
+class SalesStateViewSet(viewsets.ViewSet):
+    """
+    Endpoints:
+    - POST /sales/state/open/   -> abrir
+    - POST /sales/state/close/  -> cerrar
+    - GET  /sales/state/current/-> estado actual
+    """
+    ##def get_permissions(self):
+        # Ajusta permisos; si no quieres permiso, retorna []
+        ##return [IsJefe()]
 
+    @action(detail=False, methods=['post'])
+    def open(self, request):
+        opened, obj = SalesState.open()
+        if not opened:
+            return Response({"detail": "Las ventas ya están abiertas."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(SalesStateSerializer(obj).data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'])
+    def close(self, request):
+        closed, obj = SalesState.close()
+        if not closed:
+            return Response({"detail": "Las ventas ya están cerradas."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(SalesStateSerializer(obj).data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'])
+    def current(self, request):
+        obj = SalesState.current()
+        return Response(SalesStateSerializer(obj).data, status=status.HTTP_200_OK)
+
+    
 class VentaViewSet(viewsets.ModelViewSet):
     queryset = Venta.objects.all()
     serializer_class = VentaSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrVendedor]
+    #permission_classes = [IsAuthenticated, IsAdminOrVendedor]
+
+    def perform_create(self, serializer):
+        # Aseguramos que exista la fila singleton
+        SalesState._ensure_singleton()
+
+        # Abrimos transacción y bloqueamos la fila para evitar race conditions
+        with transaction.atomic():
+            state = SalesState.objects.select_for_update().get(pk=1)
+            if not state.is_open:
+                # Levantamos un error que DRF traducirá a 400 con mensaje JSON
+                raise ValidationError("El día está cerrado. No se pueden registrar ventas.")
+            # Si está abierto, creamos la venta
+            serializer.save()
 
 
-
-
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdmin])
-    def reporte_dia(self, request):
-        hoy = timezone.now().date()
-        ventas = Venta.objects.filter(fecha__date=hoy)
-        total = ventas.aggregate(total_dia=Sum('total'))['total_dia'] or 0
-
-        return Response({
-            "fecha": str(hoy),
-            "total_vendido": total,
-            "cantidad_ventas": ventas.count()
-        })

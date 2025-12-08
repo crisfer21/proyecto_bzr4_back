@@ -19,7 +19,7 @@ from django.urls import path, include
 from rest_framework import routers
 from productos.views import ProductoViewSet
 
-from ventas.views import VentaViewSet
+from ventas.views import VentaViewSet, SalesStateViewSet
 from usuarios.views import UserViewSet, CustomTokenObtainPairView
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -27,6 +27,9 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 router = routers.DefaultRouter()
 router.register('productos', ProductoViewSet)
+##router.register(r'days', SalesStateViewSet, basename='days')
+router.register(r'state', SalesStateViewSet, basename='sales-state')
+
 router.register('usuarios', UserViewSet)
 router.register('ventas', VentaViewSet)
 
