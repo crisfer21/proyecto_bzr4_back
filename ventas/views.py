@@ -1,8 +1,8 @@
 from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated
 from usuarios.permisos import IsAdminOrVendedor
-from .models import Venta, SalesState
-from .serializers import VentaSerializer, SalesStateSerializer
+from .models import Venta, Boleta, Factura, SalesState
+from .serializers import BoletaSerializer, FacturaSerializer, SalesStateSerializer
 from rest_framework.exceptions import ValidationError
 
 from rest_framework.decorators import action
@@ -46,22 +46,14 @@ class SalesStateViewSet(viewsets.ViewSet):
         return Response(SalesStateSerializer(obj).data, status=status.HTTP_200_OK)
 
     
-class VentaViewSet(viewsets.ModelViewSet):
-    queryset = Venta.objects.all()
-    serializer_class = VentaSerializer
-    #permission_classes = [IsAuthenticated, IsAdminOrVendedor]
+class BoletaViewSet(viewsets.ModelViewSet):
+    queryset = Boleta.objects.all()
+    serializer_class = BoletaSerializer
 
-    def perform_create(self, serializer):
-        # Aseguramos que exista la fila singleton
-        SalesState._ensure_singleton()
 
-        # Abrimos transacción y bloqueamos la fila para evitar race conditions
-        with transaction.atomic():
-            state = SalesState.objects.select_for_update().get(pk=1)
-            if not state.is_open:
-                # Levantamos un error que DRF traducirá a 400 con mensaje JSON
-                raise ValidationError("El día está cerrado. No se pueden registrar ventas.")
-            # Si está abierto, creamos la venta
-            serializer.save()
+class FacturaViewSet(viewsets.ModelViewSet):
+    queryset = Factura.objects.all()
+    serializer_class = FacturaSerializer
+
 
 

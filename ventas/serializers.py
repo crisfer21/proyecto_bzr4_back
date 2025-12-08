@@ -1,68 +1,140 @@
 from rest_framework import serializers
-from decimal import Decimal # Importante para cálculos monetarios precisos
-from .models import Venta, DetalleVenta, SalesState
+from decimal import Decimal
+from django.db import transaction
+from .models import Boleta, Factura, DetalleVenta, SalesState
 from productos.models import Producto
-from usuarios.serializers import UserSerializer
 
+# -----------------------------------------------------------------------------
+# SERIALIZER DE DETALLE
+# -----------------------------------------------------------------------------
 class DetalleVentaSerializer(serializers.ModelSerializer):
-    # aceptar IDs de producto desde el frontend y convertir a instancia Producto
-    producto = serializers.PrimaryKeyRelatedField(queryset=Producto.objects.all())
-
+    # Agregamos precio_unitario como write_only porque no existe en el modelo DetalleVenta,
+    # pero lo necesitamos para calcular el subtotal si viene del frontend.
+    precio_unitario = serializers.DecimalField(max_digits=10, decimal_places=2, write_only=True)
+    
     class Meta:
         model = DetalleVenta
-        fields = ['producto', 'cantidad', 'subtotal']
+        # Quitamos 'precio_unitario' de fields de lectura porque no está en la DB
+        fields = ["producto", "cantidad", "subtotal", "precio_unitario"]
+        read_only_fields = ["subtotal"] # El subtotal lo calcula el backend
 
-class VentaSerializer(serializers.ModelSerializer):
+# -----------------------------------------------------------------------------
+# SERIALIZER DE BOLETA
+# -----------------------------------------------------------------------------
+class BoletaSerializer(serializers.ModelSerializer):
     detalles = DetalleVentaSerializer(many=True)
 
     class Meta:
-        model = Venta
-        # AGREGADOS: 'subtotal' e 'iva' para que se devuelvan en la respuesta JSON
-        fields = ['id', 'fecha', 'vendedor', 'tipo_documento', 'subtotal', 'iva', 'total', 'detalles']
-        # Los marcamos como read_only porque los calcularemos en el backend para seguridad
-        read_only_fields = ('id', 'fecha', 'subtotal', 'iva', 'total')
+        model = Boleta
+        # Quitamos "cliente" porque no existe en el modelo Boleta
+        fields = [
+            "id", "fecha", "vendedor", "numero_boleta",
+            "total_neto", "total_iva", "total_final", "detalles"
+        ]
+        read_only_fields = ["fecha", "total_neto", "total_iva", "total_final", "vendedor"]
 
     def create(self, validated_data):
-        detalles_data = validated_data.pop('detalles', [])
-        # Creamos la venta vacía primero
-        venta = Venta.objects.create(**validated_data)
+        detalles_data = validated_data.pop("detalles")
+        
+        # Obtenemos el usuario del contexto (request.user)
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            validated_data['vendedor'] = request.user
 
-        acumulado_subtotal = Decimal(0) # Usamos Decimal para precisión
+        with transaction.atomic():
+            # 1. Crear la Boleta
+            boleta = Boleta.objects.create(**validated_data)
 
-        for detalle in detalles_data:
-            producto = detalle['producto']
-            cantidad = detalle['cantidad']
+            total_neto = Decimal(0)
+
+            # 2. Procesar Detalles
+            for detalle in detalles_data:
+                producto = detalle["producto"]
+                cantidad = detalle["cantidad"]
+                precio = detalle["precio_unitario"]
+                
+                # Opcional: Validar que el precio coincida con producto.precio si no permites cambios manuales
+                
+                subtotal = Decimal(cantidad) * Decimal(precio)
+                total_neto += subtotal
+                
+                # IMPORTANTE: Usamos 'boleta=boleta' (no venta=boleta)
+                DetalleVenta.objects.create(
+                    boleta=boleta,
+                    producto=producto,
+                    cantidad=cantidad,
+                    subtotal=subtotal
+                )
+
+            # 3. Cálculos Finales (usando Decimal)
+            # IVA 19%
+            iva = total_neto * Decimal('0.19')
+            total_final = total_neto + iva
+
+            boleta.total_neto = total_neto
+            boleta.total_iva = iva
+            boleta.total_final = total_final
+            boleta.save()
             
-            # Verificamos si el frontend mandó el subtotal, si no lo calculamos
-            subtotal_linea = detalle.get('subtotal')
-            if subtotal_linea is None:
-                subtotal_linea = producto.precio * cantidad
+            return boleta
+
+# -----------------------------------------------------------------------------
+# SERIALIZER DE FACTURA
+# -----------------------------------------------------------------------------
+class FacturaSerializer(serializers.ModelSerializer):
+    detalles = DetalleVentaSerializer(many=True)
+
+    class Meta:
+        model = Factura
+        # Quitamos "cliente" genérico, dejamos los datos específicos de factura
+        fields = [
+            "id", "fecha", "vendedor", "numero_factura",
+            "rut_cliente", "razon_social", "giro", "direccion",
+            "total_neto", "total_iva", "total_final", "detalles"
+        ]
+        read_only_fields = ["fecha", "total_neto", "total_iva", "total_final", "vendedor"]
+
+    def create(self, validated_data):
+        detalles_data = validated_data.pop("detalles")
+        
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            validated_data['vendedor'] = request.user
+
+        with transaction.atomic():
+            factura = Factura.objects.create(**validated_data)
+
+            total_neto = Decimal(0)
+
+            for detalle in detalles_data:
+                producto = detalle["producto"]
+                cantidad = detalle["cantidad"]
+                precio = detalle["precio_unitario"]
+
+                subtotal = Decimal(cantidad) * Decimal(precio)
+                total_neto += subtotal
+                
+                # IMPORTANTE: Usamos 'factura=factura'
+                DetalleVenta.objects.create(
+                    factura=factura,
+                    producto=producto,
+                    cantidad=cantidad,
+                    subtotal=subtotal
+                )
+
+            iva = total_neto * Decimal('0.19')
+            total_final = total_neto + iva
+
+            factura.total_neto = total_neto
+            factura.total_iva = iva
+            factura.total_final = total_final
+            factura.save()
             
-            # Convertimos a Decimal por seguridad si viene como float
-            subtotal_linea = Decimal(subtotal_linea)
+            return factura
 
-            # crear detalle asignando la venta
-            DetalleVenta.objects.create(
-                venta=venta,
-                producto=producto,
-                cantidad=cantidad,
-                subtotal=subtotal_linea
-            )
-            acumulado_subtotal += subtotal_linea
-
-        # --- LÓGICA DE CÁLCULO ACTUALIZADA ---
-        # 1. Asignamos el subtotal (suma de los productos)
-        venta.subtotal = acumulado_subtotal
-        
-        # 2. Calculamos IVA (19%)
-        venta.iva = acumulado_subtotal * Decimal('0.19')
-        
-        # 3. Calculamos Total Final
-        venta.total = venta.subtotal + venta.iva
-        
-        venta.save()
-        return venta
-    
+# -----------------------------------------------------------------------------
+# SERIALIZER DE ESTADO
+# -----------------------------------------------------------------------------
 class SalesStateSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesState
