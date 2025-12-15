@@ -9,7 +9,7 @@ from rest_framework.filters import SearchFilter
 class ProductoViewSet(viewsets.ModelViewSet):
     queryset = Producto.objects.all()
     serializer_class = ProductoSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrVendedor]   # SOLO ADMIN
+    permission_classes = [IsAuthenticated, IsAdminOrVendedor]  
 
     filter_backends = [SearchFilter]
-    search_fields = ['nombre', ]
+    search_fields = ['nombre', 'sku' ]

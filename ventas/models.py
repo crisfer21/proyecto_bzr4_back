@@ -55,64 +55,12 @@ class DetalleVenta(models.Model):
         return f"{self.producto} x {self.cantidad} = {self.subtotal}"
 
 
-class SalesState(models.Model):
-    """
-    Singleton simple que guarda el estado global de ventas.
-    Usamos pk=1 como única fila esperada; get_or_create(pk=1) lo garantiza.
-    """
-    is_open = models.BooleanField(default=False)
-    updated_at = models.DateTimeField(auto_now=True)
 
-    class Meta:
-        verbose_name = "Estado de ventas"
-        verbose_name_plural = "Estado de ventas"
+from django.db import models
+
+class SesionCaja(models.Model):
+    fecha_apertura = models.DateTimeField(auto_now_add=True)
+    fecha_cierre = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
-        return "ABIERTO" if self.is_open else "CERRADO"
-
-    @classmethod
-    def _ensure_singleton(cls):
-        # Crea la fila si no existe (sin lock). Luego la bloqueamos con select_for_update cuando haga falta.
-        obj, _ = cls.objects.get_or_create(pk=1, defaults={'is_open': False})
-        return obj
-
-    @classmethod
-    def open(cls):
-        """
-        Intenta abrir las ventas.
-        Devuelve (True, instance) si abrió; (False, instance) si ya estaba abierto.
-        """
-        cls._ensure_singleton()
-        with transaction.atomic():
-            # bloquea la fila para evitar race conditions
-            obj = cls.objects.select_for_update().get(pk=1)
-            if obj.is_open:
-                return False, obj
-            obj.is_open = True
-            obj.updated_at = timezone.now()
-            obj.save()
-            return True, obj
-
-    @classmethod
-    def close(cls):
-        """
-        Intenta cerrar las ventas.
-        Devuelve (True, instance) si cerró; (False, instance) si ya estaba cerrado.
-        """
-        cls._ensure_singleton()
-        with transaction.atomic():
-            obj = cls.objects.select_for_update().get(pk=1)
-            if not obj.is_open:
-                return False, obj
-            obj.is_open = False
-            obj.updated_at = timezone.now()
-            obj.save()
-            return True, obj
-
-    @classmethod
-    def current(cls):
-        """
-        Devuelve la instancia (si existe) o crea la singleton si no.
-        """
-        obj, _ = cls.objects.get_or_create(pk=1, defaults={'is_open': False})
-        return obj
+        return f"Sesión {self.id} - {'ABIERTA' if not self.fecha_cierre else 'CERRADA'}"

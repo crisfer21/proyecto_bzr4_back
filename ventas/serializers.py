@@ -1,22 +1,35 @@
 from rest_framework import serializers
 from decimal import Decimal
 from django.db import transaction
-from .models import Boleta, Factura, DetalleVenta, SalesState
+from .models import Boleta, Factura, DetalleVenta
 from productos.models import Producto
 
 # -----------------------------------------------------------------------------
 # SERIALIZER DE DETALLE
 # -----------------------------------------------------------------------------
 class DetalleVentaSerializer(serializers.ModelSerializer):
-    # Agregamos precio_unitario como write_only porque no existe en el modelo DetalleVenta,
-    # pero lo necesitamos para calcular el subtotal si viene del frontend.
+    # 1. Traemos el NOMBRE del producto relacionado
+    nombre_producto = serializers.ReadOnlyField(source='producto.nombre')
+    
+    # 2. Traemos el PRECIO del producto relacionado (para mostrarlo)
+    # Le ponemos un nombre distinto para no chocar con el de escritura
+    precio_real = serializers.ReadOnlyField(source='producto.precio')
+
+    # 3. Este se mantiene igual (es para recibir el dato al vender)
     precio_unitario = serializers.DecimalField(max_digits=10, decimal_places=2, write_only=True)
     
     class Meta:
         model = DetalleVenta
-        # Quitamos 'precio_unitario' de fields de lectura porque no está en la DB
-        fields = ["producto", "cantidad", "subtotal", "precio_unitario"]
-        read_only_fields = ["subtotal"] # El subtotal lo calcula el backend
+        # AGREGAMOS 'nombre_producto' y 'precio_real' a la lista
+        fields = [
+            "producto", 
+            "nombre_producto", 
+            "cantidad", 
+            "subtotal", 
+            "precio_unitario", 
+            "precio_real"
+        ]
+        read_only_fields = ["subtotal"]
 
 # -----------------------------------------------------------------------------
 # SERIALIZER DE BOLETA
@@ -135,8 +148,8 @@ class FacturaSerializer(serializers.ModelSerializer):
 # -----------------------------------------------------------------------------
 # SERIALIZER DE ESTADO
 # -----------------------------------------------------------------------------
-class SalesStateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = SalesState
-        fields = ('id', 'is_open', 'updated_at')
-        read_only_fields = ('id', 'updated_at')
+
+class EstadoCajaSerializer(serializers.Serializer):
+    caja_abierta = serializers.BooleanField()
+
+
